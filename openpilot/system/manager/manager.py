@@ -13,6 +13,7 @@ from openpilot.common.utils import atomic_write
 from openpilot.common.params import Params, ParamKeyFlag
 from openpilot.common.text_window import TextWindow
 from openpilot.common.hardware import HARDWARE
+from openpilot.system.hardware.chestnut.flash import set_pcie_power
 from openpilot.system.manager.helpers import unblock_stdout, save_bootlog
 from openpilot.system.manager.process import ensure_running
 from openpilot.system.manager.process_config import managed_processes
@@ -121,6 +122,8 @@ def manager_thread() -> None:
 
   started_prev = False
   ignition_prev = False
+  chestnut_powered: bool | None = None
+  chestnut_power_attempt = 0.
 
   while True:
     sm.update(1000)
@@ -135,6 +138,26 @@ def manager_thread() -> None:
     ignition = any(ps.ignitionLine or ps.ignitionCan for ps in sm['pandaStates'] if ps.pandaType != log.PandaState.PandaType.unknown)
     if ignition and not ignition_prev:
       params.clear_all(ParamKeyFlag.CLEAR_ON_IGNITION_ON)
+
+    # modeld is gated on `started`, so track the rail against the same state.
+    # This avoids cutting power while modeld can still be running during the
+    # ignition-to-offroad transition or after a transient Panda disconnect.
+    chestnut_present = sm['deviceState'].chestnutPresent
+    if not chestnut_present:
+      chestnut_powered = None
+    elif chestnut_powered != started and (started or time.monotonic() - chestnut_power_attempt >= 5.):
+      # modeld owns the GPU while onroad. Let tinygrad drain and finalize it
+      # before removing the downstream PCIe rails.
+      if not started:
+        managed_processes["modeld"].stop()
+
+      chestnut_power_attempt = time.monotonic()
+      power_changed = set_pcie_power(started)
+      if power_changed or started:
+        # modeld performs the same link-up operation during initialization, so
+        # a failed preflight must not prevent the normal small-model fallback.
+        chestnut_powered = started
+      cloudlog.event("chestnut power", enabled=started, success=power_changed, error=not power_changed)
 
     # update offroad state for services that don't subscribe to deviceState
     if started != started_prev:
