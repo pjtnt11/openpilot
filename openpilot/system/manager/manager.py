@@ -139,22 +139,25 @@ def manager_thread() -> None:
     if ignition and not ignition_prev:
       params.clear_all(ParamKeyFlag.CLEAR_ON_IGNITION_ON)
 
+    # modeld is gated on `started`, so track the rail against the same state.
+    # This avoids cutting power while modeld can still be running during the
+    # ignition-to-offroad transition or after a transient Panda disconnect.
     chestnut_present = sm['deviceState'].chestnutPresent
     if not chestnut_present:
       chestnut_powered = None
-    elif chestnut_powered != ignition and (ignition or time.monotonic() - chestnut_power_attempt >= 5.):
+    elif chestnut_powered != started and (started or time.monotonic() - chestnut_power_attempt >= 5.):
       # modeld owns the GPU while onroad. Let tinygrad drain and finalize it
       # before removing the downstream PCIe rails.
-      if not ignition:
+      if not started:
         managed_processes["modeld"].stop()
 
       chestnut_power_attempt = time.monotonic()
-      power_changed = set_pcie_power(ignition)
-      if power_changed or ignition:
+      power_changed = set_pcie_power(started)
+      if power_changed or started:
         # modeld performs the same link-up operation during initialization, so
         # a failed preflight must not prevent the normal small-model fallback.
-        chestnut_powered = ignition
-      cloudlog.event("chestnut power", enabled=ignition, success=power_changed, error=not power_changed)
+        chestnut_powered = started
+      cloudlog.event("chestnut power", enabled=started, success=power_changed, error=not power_changed)
 
     # update offroad state for services that don't subscribe to deviceState
     if started != started_prev:
