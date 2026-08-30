@@ -17,7 +17,7 @@ from openpilot.common.realtime import config_realtime_process, DT_MDL
 from openpilot.common.transformations.camera import DEVICE_CAMERAS
 from openpilot.system.camerad.cameras.nv12_info import get_nv12_info
 from openpilot.common.transformations.model import get_warp_matrix
-from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper
+from openpilot.selfdrive.controls.lib.desire_helper import DesireHelper, LaneChangeButtonLatch
 from openpilot.selfdrive.controls.lib.drive_helpers import get_accel_from_plan, smooth_value, get_curvature_from_plan
 from openpilot.selfdrive.modeld.parse_model_outputs import Parser
 from openpilot.selfdrive.modeld.compile_modeld import make_input_queues, WARP_INPUTS, POLICY_INPUTS
@@ -185,6 +185,7 @@ def main(demo=False):
   # messaging
   pm = PubMaster(["modelV2", "drivingModelData", "cameraOdometry"])
   sm = SubMaster(["deviceState", "carState", "roadCameraState", "liveCalibration", "driverMonitoringState", "carControl", "liveDelay"])
+  car_state_events_sock = messaging.sub_sock("carState")
 
   publish_state = PublishState()
   params = Params()
@@ -215,6 +216,7 @@ def main(demo=False):
   prev_action = log.ModelDataV2.Action()
 
   DH = DesireHelper()
+  lane_change_button_latch = LaneChangeButtonLatch()
 
   while True:
     # Keep receiving frames until we are at least 1 frame ahead of previous extra frame
@@ -250,6 +252,15 @@ def main(demo=False):
       meta_extra = meta_main
 
     sm.update(0)
+    raw_lane_change_button_pressed = any(
+      button_event.type == car.CarState.ButtonEvent.Type.lkas and button_event.pressed
+      for msg in messaging.drain_sock(car_state_events_sock)
+      for button_event in msg.carState.buttonEvents
+    )
+    lane_change_button_pressed = lane_change_button_latch.update(
+      sm['carState'], sm['carControl'].latActive, DH.lane_change_state,
+      raw_lane_change_button_pressed, time.monotonic(),
+    )
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
     frame_id = sm["roadCameraState"].frameId
@@ -311,7 +322,9 @@ def main(demo=False):
       l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
       r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
       lane_change_prob = l_lane_change_prob + r_lane_change_prob
-      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob)
+      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, lane_change_button_pressed)
+      if lane_change_button_pressed and DH.lane_change_state == log.LaneChangeState.laneChangeStarting:
+        lane_change_button_latch.consume()
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
       drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
