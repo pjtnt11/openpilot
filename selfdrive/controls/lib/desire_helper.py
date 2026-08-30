@@ -7,6 +7,7 @@ LaneChangeDirection = log.LaneChangeDirection
 
 LANE_CHANGE_SPEED_MIN = 20 * CV.MPH_TO_MS
 LANE_CHANGE_TIME_MAX = 10.
+LANE_CHANGE_BUTTON_TIMEOUT = 0.5
 
 DESIRES = {
   LaneChangeDirection.none: {
@@ -30,6 +31,41 @@ DESIRES = {
 }
 
 
+class LaneChangeButtonLatch:
+  def __init__(self):
+    self.direction = LaneChangeDirection.none
+    self.expires_at = 0.0
+
+  def clear(self):
+    self.direction = LaneChangeDirection.none
+    self.expires_at = 0.0
+
+  def update(self, carstate, lateral_active, lane_change_state, button_pressed, now):
+    one_blinker = carstate.leftBlinker != carstate.rightBlinker
+    direction = LaneChangeDirection.left if carstate.leftBlinker else LaneChangeDirection.right
+    blindspot_detected = ((carstate.leftBlindspot and direction == LaneChangeDirection.left) or
+                          (carstate.rightBlindspot and direction == LaneChangeDirection.right))
+    can_start_lane_change = (lateral_active and one_blinker and carstate.vEgo >= LANE_CHANGE_SPEED_MIN and
+                             lane_change_state in (LaneChangeState.off, LaneChangeState.preLaneChange) and
+                             not blindspot_detected)
+
+    if not can_start_lane_change:
+      self.clear()
+      return False
+
+    if self.direction not in (LaneChangeDirection.none, direction) or now >= self.expires_at:
+      self.clear()
+
+    if button_pressed:
+      self.direction = direction
+      self.expires_at = now + LANE_CHANGE_BUTTON_TIMEOUT
+
+    return self.direction == direction and now < self.expires_at
+
+  def consume(self):
+    self.clear()
+
+
 class DesireHelper:
   def __init__(self):
     self.lane_change_state = LaneChangeState.off
@@ -44,7 +80,7 @@ class DesireHelper:
   def get_lane_change_direction(CS):
     return LaneChangeDirection.left if CS.leftBlinker else LaneChangeDirection.right
 
-  def update(self, carstate, lateral_active, lane_change_prob):
+  def update(self, carstate, lateral_active, lane_change_prob, lane_change_button_pressed=False):
     v_ego = carstate.vEgo
     one_blinker = carstate.leftBlinker != carstate.rightBlinker
     below_lane_change_speed = v_ego < LANE_CHANGE_SPEED_MIN
@@ -60,8 +96,9 @@ class DesireHelper:
         # Initialize lane change direction to prevent UI alert flicker
         self.lane_change_direction = self.get_lane_change_direction(carstate)
 
-      # LaneChangeState.preLaneChange
-      elif self.lane_change_state == LaneChangeState.preLaneChange:
+      # Check preLaneChange independently so a button tap received in the same model cycle
+      # as the blinker edge is not lost.
+      if self.lane_change_state == LaneChangeState.preLaneChange:
         # Update lane change direction
         self.lane_change_direction = self.get_lane_change_direction(carstate)
 
@@ -75,7 +112,7 @@ class DesireHelper:
         if not one_blinker or below_lane_change_speed:
           self.lane_change_state = LaneChangeState.off
           self.lane_change_direction = LaneChangeDirection.none
-        elif torque_applied and not blindspot_detected:
+        elif (torque_applied or lane_change_button_pressed) and not blindspot_detected:
           self.lane_change_state = LaneChangeState.laneChangeStarting
 
       # LaneChangeState.laneChangeStarting
