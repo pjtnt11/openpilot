@@ -5,7 +5,9 @@ from hypothesis import given, settings, strategies as st
 from opendbc.car import Bus
 from opendbc.car.structs import CarParams
 from opendbc.car.fw_versions import build_fw_dict
+from opendbc.car.toyota.carcontroller import get_accel_lookahead_time
 from opendbc.car.toyota.fingerprints import FW_VERSIONS
+from opendbc.car.toyota.interface import CarInterface
 from opendbc.car.toyota.values import CAR, DBC, TSS2_CAR, ANGLE_CONTROL_CAR, RADAR_ACC_CAR, SECOC_CAR, \
                                                   FW_QUERY_CONFIG, PLATFORM_CODE_ECUS, FUZZY_EXCLUDED_PLATFORMS, \
                                                   get_platform_codes
@@ -19,6 +21,16 @@ def check_fw_version(fw_version: bytes) -> bool:
 
 
 class TestToyotaInterfaces(unittest.TestCase):
+  def test_frogsgomoo_longitudinal_tune(self):
+    CP = CarInterface.get_non_essential_params(CAR.TOYOTA_COROLLA_TSS2)
+    self.assertAlmostEqual(CP.vEgoStopping, 0.5)
+    self.assertAlmostEqual(CP.vEgoStarting, 0.1)
+    self.assertAlmostEqual(CP.stoppingDecelRate, 0.01)
+
+    self.assertAlmostEqual(get_accel_lookahead_time(2.), 0.35)
+    self.assertAlmostEqual(get_accel_lookahead_time(3.5), 0.675)
+    self.assertAlmostEqual(get_accel_lookahead_time(5.), 1.0)
+
   def test_car_sets(self):
     # Angle and radar-ACC cars are always TSS2 cars
     assert len(ANGLE_CONTROL_CAR - TSS2_CAR) == 0
