@@ -33,6 +33,11 @@ MAX_STEER_RATE_FRAMES = 17  # tx control frames needed before torque can be cut
 MAX_USER_TORQUE = 500
 
 
+def get_accel_lookahead_time(v_ego):
+  # FrogPilot's FrogsGoMoo tune anticipates Toyota's slow longitudinal response.
+  return float(np.interp(v_ego, [2., 5.], [0.35, 1.0]))
+
+
 def get_long_tune(CP, params):
   if CP.carFingerprint in TSS2_CAR:
     kiBP = [2., 5.]
@@ -216,7 +221,7 @@ class CarController(CarControllerBase):
         self.aego.update(a_ego_blended)
         j_ego = (self.aego.x - prev_aego) / (DT_CTRL * 3)
 
-        future_t = float(np.interp(CS.out.vEgo, [2., 5.], [0.25, 0.5]))
+        future_t = get_accel_lookahead_time(CS.out.vEgo)
         a_ego_future = a_ego_blended + j_ego * future_t
 
         if CC.longActive:
