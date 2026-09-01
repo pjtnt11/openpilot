@@ -5,7 +5,7 @@ from openpilot.common.parameterized import parameterized_class
 from cereal import log
 
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import (
-  get_jerk_factor, get_safe_obstacle_distance, get_stopped_equivalence_factor, get_T_FOLLOW,
+  get_jerk_factor, get_safe_obstacle_distance, get_stopped_equivalence_factor, get_T_FOLLOW, LongitudinalMpc,
 )
 from openpilot.selfdrive.test.longitudinal_maneuvers.maneuver import Maneuver
 
@@ -48,6 +48,22 @@ def test_personality_follow_times(personality, expected):
 ])
 def test_personality_jerk_factors(personality, expected):
   assert get_jerk_factor(personality) == pytest.approx(expected)
+
+
+def test_human_following_closes_gap_to_faster_lead():
+  t_follow, jerk_factor = LongitudinalMpc.get_human_follow_values(
+    v_ego=2., lead_distance=10., v_lead=4., personality=log.LongitudinalPersonality.standard,
+  )
+  assert t_follow == pytest.approx(1.15 / 4)
+  assert jerk_factor == pytest.approx(0.5 / 4)
+
+
+def test_human_following_adjusts_for_slower_lead():
+  t_follow, jerk_factor = LongitudinalMpc.get_human_follow_values(
+    v_ego=20., lead_distance=50., v_lead=15., personality=log.LongitudinalPersonality.standard,
+  )
+  assert t_follow == pytest.approx(1.15 / 2.5)
+  assert jerk_factor == pytest.approx(0.5)
 
 
 @parameterized_class(("e2e", "personality", "speed"), itertools.product(

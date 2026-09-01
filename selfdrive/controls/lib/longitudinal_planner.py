@@ -17,6 +17,7 @@ from openpilot.common.swaglog import cloudlog
 
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
+HUMAN_ACCEL_CITY_SPEED = 25.0
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
@@ -27,6 +28,13 @@ _A_TOTAL_MAX_BP = [20., 40.]
 
 def get_max_accel(v_ego):
   return np.interp(v_ego, A_CRUISE_MAX_BP, A_CRUISE_MAX_VALS)
+
+def get_human_max_accel(v_ego, v_cruise):
+  max_accel = get_max_accel(v_ego)
+  low_speed_accel = np.interp(v_cruise, [0., HUMAN_ACCEL_CITY_SPEED / 2, HUMAN_ACCEL_CITY_SPEED],
+                              [max_accel / 4, max_accel / 2, max_accel])
+  ramp_off_accel = np.interp(v_cruise - v_ego, [0., 1., 5.], [0., 0.5, max_accel])
+  return min(max_accel, low_speed_accel, ramp_off_accel)
 
 def get_coast_accel(pitch):
   return np.sin(pitch) * -5.65 - 0.3  # fitted from data using xx/projects/allow_throttle/compute_coast_accel.py
@@ -105,7 +113,7 @@ class LongitudinalPlanner:
     # No change cost when user is controlling the speed, or when standstill
     prev_accel_constraint = not (reset_state or sm['carState'].standstill)
 
-    accel_clip = [ACCEL_MIN, get_max_accel(v_ego)]
+    accel_clip = [ACCEL_MIN, get_human_max_accel(v_ego, v_cruise)]
     steer_angle_without_offset = sm['carState'].steeringAngleDeg - sm['liveParameters'].angleOffsetDeg
     accel_clip = limit_accel_in_turns(v_ego, steer_angle_without_offset, accel_clip, self.CP)
 
@@ -128,9 +136,17 @@ class LongitudinalPlanner:
     if force_slow_decel:
       v_cruise = 0.0
 
-    self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality)
+    lead_one = sm['radarState'].leadOne
+    if lead_one.status:
+      t_follow, jerk_factor = self.mpc.get_human_follow_values(v_ego, lead_one.dRel, lead_one.vLead,
+                                                               personality=sm['selfdriveState'].personality)
+    else:
+      t_follow = None
+      jerk_factor = None
+
+    self.mpc.set_weights(prev_accel_constraint, personality=sm['selfdriveState'].personality, jerk_factor=jerk_factor)
     self.mpc.set_cur_state(self.v_desired_filter.x, self.a_desired)
-    self.mpc.update(sm['radarState'], v_cruise, personality=sm['selfdriveState'].personality)
+    self.mpc.update(sm['radarState'], v_cruise, personality=sm['selfdriveState'].personality, t_follow=t_follow)
 
     self.v_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.v_solution)
     self.a_desired_trajectory = np.interp(CONTROL_N_T_IDX, T_IDXS_MPC, self.mpc.a_solution)

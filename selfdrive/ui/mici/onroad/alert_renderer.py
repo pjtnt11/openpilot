@@ -281,6 +281,8 @@ class AlertRenderer(Widget):
       bg_height = small_alert_height
     elif event_name == 'laneChangeBlocked':
       bg_height = medium_alert_height
+    elif event_name == 'experimentalMode':
+      bg_height = small_alert_height
     else:
       bg_height = int(self._rect.height)
 

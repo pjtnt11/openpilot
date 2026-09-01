@@ -16,7 +16,7 @@ from openpilot.common.gps import get_gps_location_service
 
 from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.selfdrive.locationd.helpers import PoseCalibrator, Pose
-from openpilot.selfdrive.selfdrived.events import Events, ET
+from openpilot.selfdrive.selfdrived.events import Events, ET, NormalPermanentAlert
 from openpilot.selfdrive.selfdrived.helpers import ExcessiveActuationCheck
 from openpilot.selfdrive.selfdrived.state import StateMachine
 from openpilot.selfdrive.selfdrived.alertmanager import AlertManager, set_offroad_alert
@@ -428,11 +428,28 @@ class SelfdriveD:
         self.params.put('LongitudinalPersonality', self.personality)
         self.events.add(EventName.personalityChanged)
 
+  def update_experimental_mode(self, CS):
+    if not CS.canValid or CS.leftBlinker or CS.rightBlinker or self.CP.passive or not self.CP.openpilotLongitudinalControl:
+      return
+
+    for be in CS.buttonEvents:
+      if be.type == ButtonType.lkas and be.pressed:
+        experimental_mode = not self.params.get_bool("ExperimentalMode")
+        self.params.put_bool("ExperimentalMode", experimental_mode, block=True)
+
+        alert = NormalPermanentAlert(f"Experimental Mode {'On' if experimental_mode else 'Off'}", duration=2.5)
+        alert.alert_type = "experimentalMode/permanent"
+        alert.event_type = ET.PERMANENT
+        self.AM.add_many(self.sm.frame, [alert])
+
   def data_sample(self):
     _car_state = messaging.recv_one(self.car_state_sock)
     CS = _car_state.carState if _car_state else self.CS_prev
 
     self.sm.update(0)
+
+    if _car_state is not None:
+      self.update_experimental_mode(CS)
 
     if not self.initialized:
       all_valid = CS.canValid and self.sm.all_checks()
