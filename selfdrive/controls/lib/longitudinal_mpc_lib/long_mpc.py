@@ -267,8 +267,9 @@ class LongitudinalMpc:
     for i in range(N):
       self.solver.cost_set(i, 'Zl', Zl)
 
-  def set_weights(self, prev_accel_constraint=True, personality=log.LongitudinalPersonality.standard):
-    jerk_factor = get_jerk_factor(personality)
+  def set_weights(self, prev_accel_constraint=True, personality=log.LongitudinalPersonality.standard, jerk_factor=None):
+    if jerk_factor is None:
+      jerk_factor = get_jerk_factor(personality)
     a_change_cost = A_CHANGE_COST if prev_accel_constraint else 0
     cost_weights = [X_EGO_OBSTACLE_COST, X_EGO_COST, V_EGO_COST, A_EGO_COST, jerk_factor * a_change_cost, jerk_factor * J_EGO_COST]
     constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, DANGER_ZONE_COST]
@@ -313,8 +314,31 @@ class LongitudinalMpc:
     lead_xv = self.extrapolate_lead(x_lead, v_lead, a_lead, a_lead_tau)
     return lead_xv
 
-  def update(self, radarstate, v_cruise, personality=log.LongitudinalPersonality.standard):
+  @staticmethod
+  def get_human_follow_values(v_ego, lead_distance, v_lead, personality=log.LongitudinalPersonality.standard):
     t_follow = get_T_FOLLOW(personality)
+    jerk_factor = get_jerk_factor(personality)
+
+    if v_lead > v_ego:
+      distance_factor = max(lead_distance - (v_ego * t_follow), 1.)
+      accelerating_offset = float(np.clip(STOP_DISTANCE - v_ego, 1., distance_factor))
+      jerk_factor /= accelerating_offset
+      t_follow /= accelerating_offset
+
+    if v_lead < v_ego:
+      distance_factor = max(lead_distance - (v_lead * t_follow), 1.)
+      braking_offset = float(np.clip(min(v_ego - v_lead, v_lead) - COMFORT_BRAKE, 1., distance_factor))
+
+      if lead_distance >= 100.:
+        braking_offset += max(lead_distance - (v_ego * t_follow) - STOP_DISTANCE, 0.)
+
+      t_follow /= braking_offset
+
+    return t_follow, jerk_factor
+
+  def update(self, radarstate, v_cruise, personality=log.LongitudinalPersonality.standard, t_follow=None):
+    if t_follow is None:
+      t_follow = get_T_FOLLOW(personality)
     v_ego = self.x0[1]
     self.status = radarstate.leadOne.status or radarstate.leadTwo.status
 

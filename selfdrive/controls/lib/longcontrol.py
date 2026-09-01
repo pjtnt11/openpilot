@@ -76,7 +76,7 @@ class LongControl:
       self.reset()
 
     elif self.long_control_state == LongCtrlState.starting:
-      output_accel = self.CP.startAccel
+      output_accel = a_target
       self.reset()
 
     else:  # LongCtrlState.pid
