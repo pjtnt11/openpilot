@@ -19,6 +19,7 @@ from openpilot.common.swaglog import cloudlog
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
 A_CRUISE_MAX_BP = [0., 10.0, 25., 40.]
 HUMAN_ACCEL_CITY_SPEED = 25.0
+LOW_SPEED_ACCEL_BP = [20. * CV.MPH_TO_MS, 35. * CV.MPH_TO_MS]
 CONTROL_N_T_IDX = ModelConstants.T_IDXS[:CONTROL_N]
 ALLOW_THROTTLE_THRESHOLD = 0.4
 MIN_ALLOW_THROTTLE_SPEED = 2.5
@@ -31,9 +32,11 @@ def get_max_accel(v_ego):
   return np.interp(v_ego, A_CRUISE_MAX_BP, A_CRUISE_MAX_VALS)
 
 def get_human_max_accel(v_ego, v_cruise):
-  max_accel = get_max_accel(v_ego)
+  # Allow full MPC acceleration through 20 mph, then restore the cruise curve by 35 mph.
+  max_accel = np.interp(v_ego, LOW_SPEED_ACCEL_BP, [ACCEL_MAX, get_max_accel(v_ego)])
   low_speed_accel = np.interp(v_cruise, [0., HUMAN_ACCEL_CITY_SPEED / 2, HUMAN_ACCEL_CITY_SPEED],
                               [max_accel / 4, max_accel / 2, max_accel])
+  low_speed_accel = np.interp(v_ego, LOW_SPEED_ACCEL_BP, [max_accel, low_speed_accel])
   ramp_off_accel = np.interp(v_cruise - v_ego, [0., 1., 5.], [0., 0.5, max_accel])
   return min(max_accel, low_speed_accel, ramp_off_accel)
 
@@ -47,7 +50,8 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
   """
   # FIXME: This function to calculate lateral accel is incorrect and should use the VehicleModel
   # The lookup table for turns should also be updated if we do this
-  a_total_max = np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V)
+  # Leave room for the longitudinal ceiling on straight roads; turns still reduce it.
+  a_total_max = max(np.interp(v_ego, _A_TOTAL_MAX_BP, _A_TOTAL_MAX_V), a_target[1])
   a_y = v_ego ** 2 * angle_steers * CV.DEG_TO_RAD / (CP.steerRatio * CP.wheelbase)
   a_x_allowed = math.sqrt(max(a_total_max ** 2 - a_y ** 2, 0.))
 

@@ -30,7 +30,7 @@ class TestLongControlStateTransition:
 
 
 def test_human_acceleration_low_speed_limit():
-  assert get_human_max_accel(v_ego=0., v_cruise=12.5) == 0.8
+  assert get_human_max_accel(v_ego=0., v_cruise=12.5) == 2.0
 
 
 def test_human_acceleration_ramps_off_near_set_speed():
